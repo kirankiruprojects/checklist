@@ -191,8 +191,9 @@
         resultsBox.innerHTML = `
           <div class="global-search-header">Search Results</div>
           <div class="global-search-empty">
-            <div style="font-size:24px;margin-bottom:8px;">🔍</div>
-            No results for "<strong>${esc(q)}</strong>"
+            <div class="search-empty-icon">🔍</div>
+            No results for <strong>${esc(q)}</strong><br>
+            <span style="font-size:11px;opacity:0.7;">Try a different client name or broker</span>
           </div>`;
       } else {
         const sc = statusConfig;
@@ -220,7 +221,18 @@
 
     input.addEventListener('input', debounce(() => doSearch(input.value), 200));
     input.addEventListener('focus', () => { if (input.value.trim()) doSearch(input.value); });
-    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { resultsBox.style.display = 'none'; input.blur(); } });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { resultsBox.style.display = 'none'; input.value = ''; input.blur(); } });
+
+    // Clear button wiring
+    const clearBtn = root.querySelector('#global-search-clear-btn');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        input.value = '';
+        resultsBox.style.display = 'none';
+        resultsBox.innerHTML = '';
+        input.focus();
+      });
+    }
 
     document.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); input.focus(); input.select(); }
@@ -360,10 +372,13 @@
 
           <!-- Search Bar Component -->
           <div class="global-search-wrap">
-            <span class="global-search-icon">🔍</span>
+            <span class="global-search-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            </span>
             <input type="text" id="global-search-input" class="global-search-input"
-                  placeholder="Search client, broker...">
-            <span class="global-search-kbd">⌘K</span>
+                  placeholder="Search client, broker…">
+            <button class="global-search-clear" id="global-search-clear-btn" tabindex="-1" title="Clear search">&times;</button>
+            <span class="global-search-kbd">Ctrl+K</span>
             <div id="global-search-results" class="global-search-results"></div>
           </div>
 
@@ -2188,7 +2203,10 @@
 
       <div class="search-filter-row" style="display:flex;gap:12px;margin-bottom:14px;align-items:center;flex-wrap:wrap;">
         <div class="search-box-wrapper" style="flex:1;min-width:240px;position:relative;">
-          <input type="text" id="list-search-input" placeholder="Search by client, broker, conv# or task text…" value="${esc(showCompletedOnly ? state.completedSearchTerm || '' : state.listSearchTerm || '')}" class="form-control" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;">
+          <span style="position:absolute;left:13px;top:50%;transform:translateY(-50%);pointer-events:none;color:#94a3b8;display:flex;align-items:center;z-index:1;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </span>
+          <input type="text" id="list-search-input" placeholder="Search by client, broker, conv# or task text…" value="${esc(showCompletedOnly ? state.completedSearchTerm || '' : state.listSearchTerm || '')}" class="list-search-input" style="width:100%;padding:9px 16px 9px 38px;border:1.5px solid var(--border);border-radius:24px;font-size:13px;font-family:'Inter',sans-serif;background:rgba(248,250,252,0.9);color:var(--ink);outline:none;box-shadow:0 1px 4px rgba(0,0,0,0.04);transition:all 0.25s ease;box-sizing:border-box;">
         </div>
         <div class="filter-row" style="margin:0;">
           <div class="chip ${typeFilter === 'all' ? 'active' : ''}" data-type="all">All Types</div>

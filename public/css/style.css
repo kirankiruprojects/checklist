@@ -75,10 +75,10 @@ html, body {
 .topbar {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  padding: 0 20px;
+  padding: 0 clamp(12px, 1.8vw, 24px);
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: clamp(8px, 1.2vw, 20px);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -122,10 +122,17 @@ html, body {
 .top-header-nav {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: clamp(2px, 0.5vw, 8px);
   height: 100%;
   flex-shrink: 1;
-  overflow: hidden;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.top-header-nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav-tab {
@@ -133,9 +140,9 @@ html, body {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 clamp(6px, 0.75vw, 14px);
   height: 100%;
-  font-size: 13px;
+  font-size: clamp(12px, 0.85vw, 13.5px);
   font-weight: 600;
   color: var(--ink-soft);
   cursor: pointer;
@@ -143,6 +150,7 @@ html, body {
   transition: color 0.2s ease;
   user-select: none;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .nav-tab:hover {
@@ -2452,7 +2460,7 @@ html, body {
 
 .stat-row-6 {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
 }
 
@@ -2659,13 +2667,13 @@ html, body {
 
 .home-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 16px;
 }
 
 .home-workspaces-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 16px;
 }
 
@@ -2676,14 +2684,8 @@ html, body {
   align-items: start;
 }
 
-/* Laptop Resolution (≤ 1360px): Adjust grid so 3-column bottom layout wraps cleanly without right-side clipping */
-@media (max-width: 1360px) {
-  .home-metrics-grid {
-    gap: 12px;
-  }
-  .home-workspaces-grid {
-    gap: 12px;
-  }
+/* Laptop & Desktop Resolution Breakpoints (100% Zoom scaling) */
+@media (max-width: 1440px) {
   .home-bottom-grid {
     grid-template-columns: 1fr 1fr;
     gap: 16px;
@@ -2693,9 +2695,18 @@ html, body {
   }
 }
 
+@media (max-width: 1180px) {
+  .brand-logo {
+    height: 38px;
+  }
+  .ga4-charts-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1024px) {
   .home-metrics-grid {
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(2, 1fr);
   }
   .home-workspaces-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -2747,14 +2758,14 @@ html, body {
 
 .global-search-wrap {
   position: relative;
-  width: 260px;
+  width: clamp(180px, 14vw, 240px);
   flex-shrink: 0;
   flex-grow: 0;
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .global-search-wrap:focus-within {
-  width: 340px;
+  width: clamp(230px, 18vw, 300px);
 }
 
 /* SVG icon container */
@@ -3111,8 +3122,8 @@ html, body {
    RESPONSIVE — Mobile, Tablet, Desktop
    ===================================================== */
 
-/* Tablet (≤960px): collapse nav, keep search */
-@media (max-width: 960px) {
+/* Tablet & Medium Window (≤1080px): collapse topbar nav to mobile drawer button */
+@media (max-width: 1080px) {
   .top-header-nav {
     display: none !important;
   }
@@ -3180,7 +3191,6 @@ html, body {
     max-width: 100%;
     box-sizing: border-box;
   }
-}
   .stat-row-6 {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -3218,12 +3228,5 @@ html, body {
   }
   .quick-grid {
     grid-template-columns: 1fr;
-  }
-}
-
-/* Large screens: cap topbar content */
-@media (min-width: 1280px) {
-  .global-search-wrap {
-    max-width: 420px;
   }
 }

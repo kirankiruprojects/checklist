@@ -679,8 +679,25 @@
         { label: 'EE Headcount', value: Math.max(1, Math.round(headcountTotal / 100) || 0), displayVal: headcountTotal.toLocaleString(), color: accent3 }
       ];
       legendTitle = 'Clients / Broker / Headcount';
+    } else if (moduleType === 'open_enrollment') {
+      // Build Client Name / Broker Partner / Status / CRM breakdown
+      const clientSet = new Set(), brokerSet = new Set(), statusSet = new Set(), crmSet = new Set();
+      rows.forEach(r => {
+        if (r.client) clientSet.add(r.client);
+        if (r.broker) brokerSet.add(r.broker);
+        if (r.status) statusSet.add(r.status);
+        if (r.crm) crmSet.add(r.crm);
+      });
+      slices = [
+        { label: 'Client Name', value: clientSet.size, color: '#2563eb' },
+        { label: 'Broker Partner', value: brokerSet.size, color: '#06b6d4' },
+        { label: 'Status', value: statusSet.size, color: '#f59e0b' },
+        { label: 'CRM', value: crmSet.size, color: '#8b5cf6' }
+      ];
+      if (slices.every(s => s.value === 0)) slices = [{ label: 'No Data', value: 1, color: '#e2e8f0' }];
+      legendTitle = 'Client Name / Broker Partner / Status / CRM';
     } else {
-      // CRF / Open Enrollment keep the category breakdown
+      // CRF keeps the category breakdown
       const catCount = {};
       rows.forEach(r => {
         const c = r.category || 'Other';

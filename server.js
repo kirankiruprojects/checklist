@@ -778,7 +778,8 @@ app.get('/api/submissions', (req, res) => {
         configAnalyst: header.configAnalyst || 'Unassigned',
         typeOfOe: header.typeOfOe || 'Unknown',
         activePlans: countPlans(header.activePlans),
-        passivePlans: countPlans(header.passivePlans)
+        passivePlans: countPlans(header.passivePlans),
+        crm: header.crm || ''
       };
     }
 

@@ -158,12 +158,12 @@
 
     // Status pill config for search results
     const statusConfig = {
-      requested:  { label: 'Requested',   bg: '#eff6ff', color: '#2563eb' },
-      approved:   { label: 'Approved',    bg: '#ecfdf5', color: '#059669' },
-      testing:    { label: 'In Review',   bg: '#fffbeb', color: '#d97706' },
-      in_progress:{ label: 'In Progress', bg: '#fffbeb', color: '#d97706' },
-      review:     { label: 'In Review',   bg: '#fffbeb', color: '#d97706' },
-      completed:  { label: 'Completed',   bg: '#f5f3ff', color: '#7c3aed' },
+      requested: { label: 'Requested', bg: '#eff6ff', color: '#2563eb' },
+      approved: { label: 'Approved', bg: '#ecfdf5', color: '#059669' },
+      testing: { label: 'In Review', bg: '#fffbeb', color: '#d97706' },
+      in_progress: { label: 'In Progress', bg: '#fffbeb', color: '#d97706' },
+      review: { label: 'In Review', bg: '#fffbeb', color: '#d97706' },
+      completed: { label: 'Completed', bg: '#f5f3ff', color: '#7c3aed' },
     };
 
     // Avatar color by type
@@ -200,11 +200,11 @@
         resultsBox.innerHTML = `
           <div class="global-search-header">${matches.length} result${matches.length !== 1 ? 's' : ''} found</div>
           ${matches.map(r => {
-            const initials = (r.client || 'U').trim().charAt(0).toUpperCase();
-            const s = sc[r.status] || { label: r.status || 'Requested', bg: '#f1f5f9', color: '#64748b' };
-            const avatarBg = typeColors[r.type] || typeColors.crf;
-            const meta = [typeLabelOf(r.type), r.broker ? esc(r.broker) : null, r.refConversation ? 'Conv# ' + esc(r.refConversation) : null].filter(Boolean).join(' · ');
-            return `
+          const initials = (r.client || 'U').trim().charAt(0).toUpperCase();
+          const s = sc[r.status] || { label: r.status || 'Requested', bg: '#f1f5f9', color: '#64748b' };
+          const avatarBg = typeColors[r.type] || typeColors.crf;
+          const meta = [typeLabelOf(r.type), r.broker ? esc(r.broker) : null, r.refConversation ? 'Conv# ' + esc(r.refConversation) : null].filter(Boolean).join(' · ');
+          return `
               <div class="global-search-item" data-open="${r.id}">
                 <div class="global-search-avatar" style="background:${avatarBg};">${initials}</div>
                 <div class="global-search-item-body">
@@ -213,7 +213,7 @@
                 </div>
                 <span class="global-search-status" style="background:${s.bg};color:${s.color};">${s.label}</span>
               </div>`;
-          }).join('')}`;
+        }).join('')}`;
       }
 
       resultsBox.style.display = 'block';
@@ -656,48 +656,70 @@
     container.innerHTML = '<div style="display:flex;justify-content:center;padding:40px;"><div class="spinner"></div></div>';
     state.index = await loadIndex();
     const rows = state.index.filter(r => r.type === moduleType);
-
-    // Build category counts
-    const catCount = {};
-    const colors = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ef4444', '#f97316'];
-    rows.forEach(r => {
-      const c = r.category || 'Other';
-      catCount[c] = (catCount[c] || 0) + 1;
-    });
-
     const totalRows = rows.length;
-    const slices = Object.keys(catCount).map((k, i) => ({ label: k, value: catCount[k], color: colors[i % colors.length] }));
-    if (slices.length === 0) slices.push({ label: 'No Data', value: 1, color: '#e2e8f0' });
+    const colors = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ef4444', '#f97316'];
+
+    let slices, legendTitle;
+
+    if (moduleType === 'implementation' || moduleType === 'termination') {
+      // Build Clients / Broker / EE Headcount breakdown
+      const clientSet = new Set(), brokerSet = new Set();
+      let headcountTotal = 0;
+      rows.forEach(r => {
+        if (r.client) clientSet.add(r.client);
+        if (r.broker) brokerSet.add(r.broker);
+        headcountTotal += (parseInt(r.headcount, 10) || 0);
+      });
+      const accent = moduleType === 'implementation' ? '#10b981' : '#ef4444';
+      const accent2 = moduleType === 'implementation' ? '#34d399' : '#f87171';
+      const accent3 = moduleType === 'implementation' ? '#a7f3d0' : '#fca5a5';
+      slices = [
+        { label: 'Clients', value: clientSet.size, color: accent },
+        { label: 'Broker', value: brokerSet.size, color: accent2 },
+        { label: 'EE Headcount', value: Math.max(1, Math.round(headcountTotal / 100) || 0), displayVal: headcountTotal.toLocaleString(), color: accent3 }
+      ];
+      legendTitle = 'Clients / Broker / Headcount';
+    } else {
+      // CRF / Open Enrollment keep the category breakdown
+      const catCount = {};
+      rows.forEach(r => {
+        const c = r.category || 'Other';
+        catCount[c] = (catCount[c] || 0) + 1;
+      });
+      slices = Object.keys(catCount).map((k, i) => ({ label: k, value: catCount[k], color: colors[i % colors.length] }));
+      if (slices.length === 0) slices.push({ label: 'No Data', value: 1, color: '#e2e8f0' });
+      legendTitle = 'By Category';
+    }
 
     const tot = slices.reduce((s, x) => s + x.value, 0) || 1;
     const legendHtml = slices.map(s => `
-      <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:6px;">
-        <span style="width:11px;height:11px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
-        <span style="flex:1;">${s.label}</span>
-        <span style="font-weight:700;">${s.value} <span style="color:#94a3b8;font-weight:400;">(${Math.round(s.value / tot * 100)}%)</span></span>
-      </div>
-    `).join('');
+    <div style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-bottom:6px;">
+      <span style="width:11px;height:11px;border-radius:50%;background:${s.color};flex-shrink:0;"></span>
+      <span style="flex:1;">${s.label}</span>
+      <span style="font-weight:700;">${s.displayVal || s.value} <span style="color:#94a3b8;font-weight:400;">(${Math.round(s.value / tot * 100)}%)</span></span>
+    </div>
+  `).join('');
 
     container.innerHTML = `
-      <div class="mockup-card" style="padding:24px;margin-bottom:20px;">
-        <div style="font-size:18px;font-weight:700;font-family:'Space Grotesk',sans-serif;color:#1e293b;margin-bottom:20px;">
-          ${typeLabelOf(moduleType)} — Analytics
-        </div>
-        ${totalRows === 0 ? '<div style="text-align:center;padding:40px;color:#94a3b8;font-size:15px;">📭 No records yet. Create a new ${typeLabelOf(moduleType)} to see analytics here.</div>' : `
-          <div style="display:flex;align-items:center;gap:30px;flex-wrap:wrap;">
-            ${buildDetailedDonutSvg(slices, 200, 'Total', totalRows)}
-            <div style="flex:1;min-width:200px;">
-              <div style="font-size:13px;font-weight:700;color:#475569;margin-bottom:12px;">By Category</div>
-              ${legendHtml}
-            </div>
-          </div>
-          <div style="margin-top:20px;padding-top:16px;border-top:1px solid #f1f5f9;">
-            <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:8px;">📈 Submissions Trend</div>
-            ${buildTimelineSvg(rows, 1100, 120)}
-          </div>
-        `}
+    <div class="mockup-card" style="padding:24px;margin-bottom:20px;">
+      <div style="font-size:18px;font-weight:700;font-family:'Space Grotesk',sans-serif;color:#1e293b;margin-bottom:20px;">
+        ${typeLabelOf(moduleType)} — Analytics
       </div>
-    `;
+      ${totalRows === 0 ? `<div style="text-align:center;padding:40px;color:#94a3b8;font-size:15px;">📭 No records yet. Create a new ${typeLabelOf(moduleType)} to see analytics here.</div>` : `
+        <div style="display:flex;align-items:center;gap:30px;flex-wrap:wrap;">
+          ${buildDetailedDonutSvg(slices, 200, 'Total', totalRows)}
+          <div style="flex:1;min-width:200px;">
+            <div style="font-size:13px;font-weight:700;color:#475569;margin-bottom:12px;">${legendTitle}</div>
+            ${legendHtml}
+          </div>
+        </div>
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid #f1f5f9;">
+          <div style="font-size:12px;font-weight:700;color:#475569;margin-bottom:8px;">📈 Submissions Trend</div>
+          ${buildTimelineSvg(rows, 1100, 120)}
+        </div>
+      `}
+    </div>
+  `;
     setupDonutTooltips(container);
   }
 
@@ -1926,9 +1948,11 @@
       implMonthBuckets[key] = (implMonthBuckets[key] || 0) + 1;
     });
     const implBrokerNames = Object.keys(implBrokerMap);
-    const implBrokerDonut = implBrokerNames.length > 0
-      ? implBrokerNames.map((b, i) => ({ label: b, value: implBrokerMap[b], color: ['#10b981', '#6ee7b7', '#a7f3d0', '#34d399', '#059669'][i % 5] }))
-      : [{ label: 'No Records', value: 1, color: '#e2e8f0' }];
+    const implDonut = [
+      { label: 'Clients', value: Object.keys(implClientMap).length || 0, color: '#10b981' },
+      { label: 'Broker', value: implBrokerNames.length || 0, color: '#34d399' },
+      { label: 'EE Headcount', value: Math.max(1, Math.round((implHeadcountTotal || 0) / 100) || 0), displayVal: (implHeadcountTotal || 0).toLocaleString(), color: '#a7f3d0' }
+    ];
     const implTotal = impl.length;
     const implMonths = Object.keys(implMonthBuckets).slice(-6);
 
@@ -2100,12 +2124,12 @@
               <span style="color:#10b981;">👥</span> Clients Implemented
             </div>
             <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
-              ${buildDetailedDonutSvg(implBrokerDonut, 140, 'Total', implTotal)}
-              <div class="donut-legend-right" style="flex:1;">
-                <div style="font-size:11.5px;font-weight:700;color:#1e293b;margin-bottom:6px;">Clients by Broker</div>
-                ${donutLegendRows(implBrokerDonut)}
-              </div>
-            </div>
+  ${buildDetailedDonutSvg(implDonut, 140, 'Total', implTotal)}
+  <div class="donut-legend-right" style="flex:1;">
+    <div style="font-size:11.5px;font-weight:700;color:#1e293b;margin-bottom:6px;">Clients / Broker / Headcount</div>
+    ${donutLegendRows(implDonut)}
+  </div>
+</div>
             <div style="font-size:11.5px;font-weight:700;color:#475569;margin-bottom:6px;">📅 Implementations by Month</div>
             ${miniBarChart(implMonthBuckets, '#10b981', implMonths)}
           </div>

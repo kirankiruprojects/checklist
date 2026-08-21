@@ -1037,7 +1037,6 @@
             </select>
           </div>
           <div style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap;">
-            <div class="year-chip ${selectedYear === 'all' ? 'active' : ''}" data-reports-year="all">All Years</div>
             ${years.map(y => `<div class="year-chip ${String(selectedYear) === String(y) ? 'active' : ''}" data-reports-year="${y}">${y}</div>`).join('')}
           </div>
         </div>
@@ -2909,7 +2908,12 @@
       <div class="form-header">
         <div class="form-header-top">
           <div class="form-title">Change Request Form (CRF)</div>
-          <div style="display:flex;gap:8px;"><button class="btn btn-primary btn-sm" id="save-btn">Save</button><button class="btn btn-ghost btn-sm" id="download-btn">Download .doc</button><button class="btn btn-danger-ghost btn-sm" id="delete-btn">Delete</button></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary btn-sm" id="save-btn">Save</button>
+            <button class="btn btn-ghost btn-sm" id="download-btn" title="Download Word Document (.doc)">Download .doc</button>
+            <button class="btn btn-ghost btn-sm" id="download-zip-btn" title="Download Word Document + all attached files inside a ZIP archive">📦 Download Package (.zip)</button>
+            <button class="btn btn-danger-ghost btn-sm" id="delete-btn">Delete</button>
+          </div>
         </div>
         <div class="field-grid">
           ${fieldHtml('Reference Conversation No.', 'header.refConversation', sub.header.refConversation)}
@@ -2937,6 +2941,8 @@
     wireHeaderFields(main, sub);
     main.querySelector('#back').addEventListener('click', () => goView('submissions'));
     main.querySelector('#download-btn').addEventListener('click', () => window.open(`/api/submissions/${sub.id}/export`, '_blank'));
+    const zipBtn = main.querySelector('#download-zip-btn');
+    if (zipBtn) zipBtn.addEventListener('click', () => window.open(`/api/submissions/${sub.id}/export-zip`, '_blank'));
     const crfDelBtn = main.querySelector('#delete-btn');
     if (crfDelBtn) crfDelBtn.addEventListener('click', (e) => removeSubmission(sub.id, e));
     wireSaveButton(main, sub);
@@ -3055,16 +3061,142 @@
     <div class="hint" style="margin-top:8px;">These fields match your CRF Config Master Tracker spreadsheet columns, so the Excel export lines up directly.</div>`;
   }
 
+  function formatFileSize(bytes) {
+    if (!bytes || isNaN(bytes)) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function getFileIcon(type, filename) {
+    const ext = (filename || '').split('.').pop().toLowerCase();
+    if (type === 'image' || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return '🖼️';
+    if (type === 'pdf' || ext === 'pdf') return '📄';
+    if (type === 'excel' || ['xlsx', 'xls', 'csv'].includes(ext)) return '📊';
+    if (type === 'word' || ['doc', 'docx'].includes(ext)) return '📝';
+    return '📁';
+  }
+
+  function renderAttachmentItems(attachments) {
+    if (!attachments || !attachments.length) return '';
+    return attachments.map((att, idx) => {
+      const isImg = att.type === 'image' || (att.mimetype && att.mimetype.startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(att.filename || att.originalName || '');
+      const sizeStr = formatFileSize(att.size);
+      const name = esc(att.originalName || att.filename || 'Attachment');
+      const icon = getFileIcon(att.type, att.originalName || att.filename);
+      const typeLabel = att.type === 'image' ? 'Image' : att.type === 'pdf' ? 'PDF' : att.type === 'excel' ? 'Excel' : att.type === 'word' ? 'Word' : 'File';
+      const typePillClass = 'type-' + (att.type || 'other');
+
+      const thumbHtml = isImg
+        ? `<img src="${att.url}" alt="${name}" data-preview-img="${esc(att.url)}" data-preview-title="${name}" title="Click to enlarge">`
+        : `<span class="attachment-thumb-icon">${icon}</span>`;
+
+      return `
+        <div class="attachment-card" data-att-idx="${idx}">
+          <div class="attachment-thumb">
+            ${thumbHtml}
+          </div>
+          <div class="attachment-info">
+            <div class="attachment-name" title="${name}" ${isImg ? `data-preview-img="${esc(att.url)}" data-preview-title="${name}"` : `data-open-file="${esc(att.url)}"`}>${name}</div>
+            <div class="attachment-meta">
+              <span class="attachment-type-pill ${typePillClass}">${typeLabel}</span>
+              ${sizeStr ? `<span>&middot; ${sizeStr}</span>` : ''}
+            </div>
+          </div>
+          <div class="attachment-actions">
+            ${isImg ? `<button type="button" class="attachment-btn" title="Enlarge image" data-preview-img="${esc(att.url)}" data-preview-title="${name}">🔍</button>` : ''}
+            <a href="${att.url}" download="${name}" class="attachment-btn" title="Download file" target="_blank" rel="noopener">⬇️</a>
+            <button type="button" class="attachment-btn btn-del" title="Remove attachment" data-del-att="${idx}">🗑️</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function showImageLightbox(url, title) {
+    const existing = document.querySelector('.image-modal-lightbox');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.className = 'image-modal-lightbox';
+    modal.innerHTML = `
+      <button type="button" class="lightbox-close" title="Close (Esc)">&times;</button>
+      <div class="lightbox-content">
+        <img src="${url}" alt="${esc(title)}" class="lightbox-img">
+        <div class="lightbox-footer" style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;">
+          ${title ? `<div class="lightbox-title" style="margin:0;font-weight:600;font-size:13px;color:#fff;">${esc(title)}</div>` : '<div></div>'}
+          <a href="${url}" download="${esc(title || 'screenshot.png')}" class="btn btn-sm btn-primary" style="text-decoration:none;padding:6px 12px;display:inline-flex;align-items:center;gap:6px;font-size:12px;" target="_blank" rel="noopener">
+            ⬇️ Download Image
+          </a>
+        </div>
+      </div>
+    `;
+
+    const close = () => {
+      modal.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') close();
+    };
+
+    modal.querySelector('.lightbox-close').addEventListener('click', close);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) close();
+    });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(modal);
+  }
+
   function crfSowBody(b) {
     const a = b.action, s = b.sow;
+    const attachments = Array.isArray(s.attachments) ? s.attachments : [];
     return `<div class="checkbox-group">
         ${cb('action.configChange', a.configChange, 'Configuration Change')}${cb('action.maintenanceFix', a.maintenanceFix, 'Maintenance Fix')}
         ${cb('action.dataFix', a.dataFix, 'Data Fix')}${cb('action.sprintRelease', a.sprintRelease, 'Sprint Release')}
         ${cb('action.edi', a.edi, 'EDI')}${cb('action.processChange', a.processChange, 'Process Change')}
       </div>
       <div class="field" style="margin-top:10px"><label>Describe Statement of Work</label><textarea data-crf-path="sow.text" style="min-height:100px">${esc(s.text)}</textarea></div>
-      <div class="field" style="margin-top:8px"><label>Screenshots / images (reference or link)</label>
-        <input type="text" placeholder="Paste link or filename" data-crf-path="sow.screenshotNote" value="${esc(s.screenshotNote)}">
+      
+      <div class="crf-attachments-block">
+        <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;font-weight:600;font-size:13px;flex-wrap:wrap;gap:6px;">
+          <span>📎 Attachments &amp; Screenshots (Images, PDF, Excel)</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            ${attachments.length > 0 ? `<button type="button" class="btn btn-ghost btn-xs" id="download-all-zip-btn" style="padding:2px 8px;font-size:11.5px;font-weight:600;border:1px solid var(--border);" title="Download Word Doc + all attachments in a ZIP">📦 Download All (.zip)</button>` : ''}
+            <span style="font-size:11.5px;color:var(--ink-faint);font-weight:400;">Supports PNG, JPG, PDF, XLSX, XLS, CSV</span>
+          </span>
+        </label>
+        
+        <div class="attachment-dropzone" id="sow-dropzone" title="Click or drop files here">
+          <input type="file" id="sow-file-input" multiple accept="image/*,.pdf,.xlsx,.xls,.csv,.doc,.docx" style="display:none;">
+          <div class="dropzone-inner" id="sow-dropzone-inner">
+            <div class="dropzone-icon">📎</div>
+            <div class="dropzone-text">
+              <strong>Click to browse</strong> or drag &amp; drop files here
+            </div>
+            <div class="dropzone-sub">
+              Paste screenshot directly with <kbd>Ctrl+V</kbd> &middot; Max 50MB per file
+            </div>
+            <div class="dropzone-badges">
+              <span class="dz-badge dz-img">🖼️ Screenshots &amp; Images</span>
+              <span class="dz-badge dz-pdf">📄 PDF Documents</span>
+              <span class="dz-badge dz-xls">📊 Excel / CSV</span>
+            </div>
+          </div>
+          <div class="dropzone-progress" id="sow-upload-progress" style="display:none;">
+            <div class="spinner-sm"></div>
+            <span>Uploading file(s)…</span>
+          </div>
+        </div>
+
+        <div class="attachment-list" id="sow-attachment-list" style="${attachments.length === 0 ? 'display:none;' : ''}">
+          ${renderAttachmentItems(attachments)}
+        </div>
+      </div>
+
+      <div class="field" style="margin-top:12px"><label>Screenshots / images (reference or link)</label>
+        <input type="text" placeholder="Paste link or filename (e.g. SharePoint URL, file reference)" data-crf-path="sow.screenshotNote" value="${esc(s.screenshotNote)}">
       </div>`;
   }
 
@@ -3096,16 +3228,186 @@
 
   function wireCrfCommon(main) {
     const sub = state.current;
+    if (!sub.body) sub.body = {};
+    if (!sub.body.sow) sub.body.sow = {};
+    if (!Array.isArray(sub.body.sow.attachments)) sub.body.sow.attachments = [];
 
     main.querySelectorAll('[data-toggle]').forEach(head => {
       head.addEventListener('click', () => {
         const key = head.dataset.toggle;
         const body = main.querySelector(`[data-body="${key}"]`);
         const chev = main.querySelector(`[data-chev="${key}"]`);
-        body.classList.toggle('collapsed'); chev.classList.toggle('open');
+        if (body) body.classList.toggle('collapsed');
+        if (chev) chev.classList.toggle('open');
       });
     });
 
+    // File attachments & upload handling
+    const dropzone = main.querySelector('#sow-dropzone');
+    const fileInput = main.querySelector('#sow-file-input');
+    const attList = main.querySelector('#sow-attachment-list');
+    const dzInner = main.querySelector('#sow-dropzone-inner');
+    const dzProgress = main.querySelector('#sow-upload-progress');
+
+    function wireAttachmentCardActions() {
+      if (!attList) return;
+      attList.querySelectorAll('[data-preview-img]').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showImageLightbox(el.dataset.previewImg, el.dataset.previewTitle);
+        });
+      });
+      attList.querySelectorAll('[data-open-file]').forEach(el => {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.open(el.dataset.openFile, '_blank');
+        });
+      });
+      attList.querySelectorAll('[data-del-att]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt(btn.dataset.delAtt, 10);
+          if (isNaN(idx)) return;
+          if (!confirm('Remove this attachment?')) return;
+          sub.body.sow.attachments.splice(idx, 1);
+          attList.innerHTML = renderAttachmentItems(sub.body.sow.attachments);
+          attList.style.display = sub.body.sow.attachments.length ? '' : 'none';
+          wireAttachmentCardActions();
+          setSaveState('unsaved');
+        });
+      });
+    }
+
+    wireAttachmentCardActions();
+
+    const dlAllZipBtn = main.querySelector('#download-all-zip-btn');
+    if (dlAllZipBtn && sub && sub.id) {
+      dlAllZipBtn.addEventListener('click', () => window.open(`/api/submissions/${sub.id}/export-zip`, '_blank'));
+    }
+
+    async function handleFilesUpload(files) {
+      if (!files || !files.length) return;
+      const fileArr = Array.from(files);
+      if (dzInner && dzProgress) {
+        dzInner.style.display = 'none';
+        dzProgress.style.display = 'flex';
+      }
+
+      try {
+        let uploaded = [];
+        if (!state.isOffline) {
+          const fd = new FormData();
+          fileArr.forEach(f => fd.append('files', f));
+          const res = await fetch('/api/upload', { method: 'POST', body: fd });
+          if (!res.ok) throw new Error('Upload failed with status ' + res.status);
+          const data = await res.json();
+          uploaded = data.files || [];
+        } else {
+          uploaded = await Promise.all(fileArr.map(f => new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const ext = f.name.split('.').pop().toLowerCase();
+              let fType = 'other';
+              if (f.type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) fType = 'image';
+              else if (f.type === 'application/pdf' || ext === 'pdf') fType = 'pdf';
+              else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') fType = 'excel';
+              resolve({
+                id: 'att_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+                filename: f.name,
+                originalName: f.name,
+                size: f.size,
+                type: fType,
+                url: reader.result,
+                uploadedAt: new Date().toISOString()
+              });
+            };
+            reader.readAsDataURL(f);
+          })));
+        }
+
+        sub.body.sow.attachments = (sub.body.sow.attachments || []).concat(uploaded);
+        if (attList) {
+          attList.innerHTML = renderAttachmentItems(sub.body.sow.attachments);
+          attList.style.display = '';
+          wireAttachmentCardActions();
+        }
+        setSaveState('unsaved');
+      } catch (err) {
+        alert('File upload failed: ' + err.message);
+      } finally {
+        if (dzInner && dzProgress) {
+          dzInner.style.display = '';
+          dzProgress.style.display = 'none';
+        }
+        if (fileInput) fileInput.value = '';
+      }
+    }
+
+    if (dropzone && fileInput) {
+      dropzone.addEventListener('click', (e) => {
+        if (e.target.closest('#sow-attachment-list')) return;
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', () => {
+        handleFilesUpload(fileInput.files);
+      });
+
+      ['dragenter', 'dragover'].forEach(evtName => {
+        dropzone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.add('drag-active');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(evtName => {
+        dropzone.addEventListener(evtName, (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          dropzone.classList.remove('drag-active');
+        });
+      });
+
+      dropzone.addEventListener('drop', (e) => {
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+          handleFilesUpload(e.dataTransfer.files);
+        }
+      });
+    }
+
+    // Global paste listener for pasting screenshots
+    const onPaste = (e) => {
+      if (!main.isConnected) {
+        window.removeEventListener('paste', onPaste);
+        return;
+      }
+      const items = (e.clipboardData || e.originalEvent.clipboardData)?.items;
+      if (!items) return;
+
+      const pastedFiles = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind === 'file') {
+          const blob = item.getAsFile();
+          if (blob) {
+            let fname = blob.name;
+            if (!fname || fname === 'image.png' || fname === 'blob') {
+              const dStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+              fname = `Screenshot_${dStr}.png`;
+            }
+            const namedFile = new File([blob], fname, { type: blob.type });
+            pastedFiles.push(namedFile);
+          }
+        }
+      }
+
+      if (pastedFiles.length > 0) {
+        handleFilesUpload(pastedFiles);
+      }
+    };
+
+    window.addEventListener('paste', onPaste);
 
     // Category Sync: Checking any category under "Change Category" updates the "Tracking & Metrics" Category dropdown
     main.querySelectorAll('[data-cat-check]').forEach(cb => {
@@ -3129,7 +3431,6 @@
         }
       });
     });
-
 
     main.querySelectorAll('[data-crf-path]').forEach(el => {
       const evt = el.tagName === 'SELECT' ? 'change' : (el.type === 'radio' ? 'change' : 'input');
@@ -3434,7 +3735,6 @@
             </select>
           </div>
           <div style="display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap;">
-            <div class="year-chip ${selectedYear === 'all' ? 'active' : ''}" data-tracker-year="all">All Years</div>
             ${years.map(y => `<div class="year-chip ${String(selectedYear) === String(y) ? 'active' : ''}" data-tracker-year="${y}">${y}</div>`).join('')}
           </div>
         </div>

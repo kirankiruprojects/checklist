@@ -14,15 +14,33 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 const PORT = process.env.PORT || 3000;
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const DOCUMENTS_DIR = path.join(DATA_DIR, 'Document');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const DB_PATH = process.env.SQLITE_DB_PATH || path.join(__dirname, 'data.db');
 // Ensure data directories exist (important for Railway volumes)
-[DOCUMENTS_DIR, path.join(DATA_DIR, 'synced'), path.join(DATA_DIR, 'tracker')].forEach(d => {
+[DOCUMENTS_DIR, UPLOADS_DIR, path.join(DATA_DIR, 'synced'), path.join(DATA_DIR, 'tracker')].forEach(d => {
   try { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); } catch (e) { }
+});
+
+const uploadDisk = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+      cb(null, UPLOADS_DIR);
+    },
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      const base = path.basename(file.originalname, ext).replace(/[^a-zA-Z0-9_-]/g, '_');
+      const uniqueName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${base}${ext}`;
+      cb(null, uniqueName);
+    }
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 }
 });
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '20mb' }));
+app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0, setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate'); } }));
 
 // ---------- Logo (embedded as base64 for the exported document) ----------
@@ -678,7 +696,106 @@ async function updateTrackerExcel(type) {
       const buf = await wb.xlsx.writeBuffer();
       fs.writeFileSync(TRACKER_TERM, Buffer.from(buf));
       console.log(`Tracker updated: Termination (${rows.length} rows)`);
+    } else if (type === 'open_enrollment') {
+      const rows = db.prepare("SELECT * FROM submissions WHERE type = 'open_enrollment' AND status != 'draft' ORDER BY created_at DESC").all();
+      const wb = new ExcelJS.Workbook();
+      wb.creator = 'Workforce Junction';
+      wb.created = new Date();
+      wb.modified = new Date();
+      const ws = wb.addWorksheet('Open Enrollment Tracker', { views: [{ showGridLines: true }] });
+
+      ws.columns = [
+        { header: 'S.No', key: 'sl', width: 8 },
+        { header: 'OE Renewal Doc Received Date', key: 'oeDocReceivedDate', width: 22 },
+        { header: 'Client', key: 'client', width: 30 },
+        { header: 'CRM', key: 'crm', width: 18 },
+        { header: 'Config Analyst', key: 'configAnalyst', width: 18 },
+        { header: 'OE Start Date', key: 'oeStartDate', width: 16 },
+        { header: 'OE End Date (EE)', key: 'oeEndDate', width: 16 },
+        { header: 'OE End Date (HR)', key: 'oeEndDateHR', width: 16 },
+        { header: 'OE Effective Date', key: 'oeEffectiveDate', width: 16 },
+        { header: 'Type of OE', key: 'typeOfOe', width: 16 },
+        { header: 'List/Work Flow OE', key: 'listOrWorkflow', width: 18 },
+        { header: 'Plans - Active OE', key: 'activePlans', width: 20 },
+        { header: 'Plans - Passive OE', key: 'passivePlans', width: 20 },
+        { header: 'OE Setup Status', key: 'setupStatus', width: 18 },
+        { header: 'OE Review/Testing Status', key: 'testingStatus', width: 22 },
+        { header: 'Finalization Rules Status', key: 'finalizationRulesStatus', width: 24 },
+        { header: 'Finalization Start/End Date', key: 'finalizationStartEndDate', width: 26 },
+        { header: 'Announcement Email Sent By', key: 'announcementEmailSentBy', width: 24 },
+        { header: 'Reminder Email Frequency', key: 'reminderEmailsFrequency', width: 22 },
+        { header: 'HGS Comments', key: 'comments', width: 35 },
+        { header: 'OE Closure', key: 'oeClosure', width: 14 },
+        { header: 'OE Finalization Date', key: 'oeFinalizationDate', width: 18 },
+        { header: 'Status', key: 'status', width: 14 }
+      ];
+
+      const hdr = ws.getRow(1);
+      hdr.height = 28;
+      hdr.eachCell(cell => {
+        cell.font = { name: 'Calibri', size: 11, bold: true };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'D9D2E9' } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+      });
+
+      let sl = 1;
+      rows.forEach(r => {
+        const h = safeParse(r.header_json, {});
+        const b = safeParse(r.body_json, {});
+        const deleted = !!r.is_deleted;
+        const dRow = ws.addRow([
+          sl++,
+          safeExcelDate(h.oeDocReceivedDate || b.oeDocReceivedDate) || h.oeDocReceivedDate || '',
+          r.client || '',
+          h.crm || b.crm || '',
+          h.configAnalyst || b.configAnalyst || '',
+          safeExcelDate(h.oeStartDate || b.oeStartDate) || h.oeStartDate || '',
+          safeExcelDate(h.oeEndDate || b.oeEndDate) || h.oeEndDate || '',
+          safeExcelDate(h.oeEndDateHR || b.oeEndDateHR) || h.oeEndDateHR || '',
+          safeExcelDate(h.oeEffectiveDate || b.oeEffectiveDate) || h.oeEffectiveDate || '',
+          h.typeOfOe || b.typeOfOe || '',
+          h.listOrWorkflow || b.listOrWorkflow || '',
+          h.activePlans || b.activePlans || '',
+          h.passivePlans || b.passivePlans || '',
+          h.setupStatus || b.setupStatus || '',
+          h.testingStatus || b.testingStatus || '',
+          h.finalizationRulesStatus || b.finalizationRulesStatus || '',
+          h.finalizationStartEndDate || b.finalizationStartEndDate || '',
+          safeExcelDate(h.announcementEmailSentBy || b.announcementEmailSentBy) || h.announcementEmailSentBy || '',
+          h.reminderEmailsFrequency || b.reminderEmailsFrequency || '',
+          h.comments || b.comments || '',
+          h.oeClosure || b.oeClosure || '',
+          safeExcelDate(h.oeFinalizationDate || b.oeFinalizationDate) || h.oeFinalizationDate || '',
+          deleted ? 'DELETED' : (r.status || '')
+        ]);
+
+        dRow.eachCell({ includeEmpty: true }, (cell, cn) => {
+          cell.font = { name: 'Calibri', size: 10, strike: deleted, color: deleted ? { argb: '999999' } : { argb: '000000' } };
+          cell.alignment = { vertical: 'top', wrapText: cn === 20 };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'E0E0E0' } },
+            left: { style: 'thin', color: { argb: 'E0E0E0' } },
+            bottom: { style: 'thin', color: { argb: 'E0E0E0' } },
+            right: { style: 'thin', color: { argb: 'E0E0E0' } }
+          };
+          if (deleted) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2CC' } };
+          if ([2, 6, 7, 8, 9, 18, 22].includes(cn) && cell.value instanceof Date) cell.numFmt = 'mm/dd/yyyy';
+        });
+
+        if (deleted) {
+          const sc = dRow.getCell(23);
+          sc.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'C00000' } };
+          sc.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDAD6' } };
+        }
+      });
+
+      ws.autoFilter = `A1:W${Math.max(2, 1 + rows.length)}`;
+      const buf = await wb.xlsx.writeBuffer();
+      fs.writeFileSync(TRACKER_OE, Buffer.from(buf));
+      console.log(`Tracker updated: Open Enrollment (${rows.length} rows)`);
     }
+
   } catch (err) {
     console.error(`updateTrackerExcel(${type}) failed:`, err.message);
   }
@@ -1257,26 +1374,147 @@ app.delete('/api/submissions/:id/tasks/:taskId', (req, res) => {
   res.json(fullRecord(row));
 });
 
+// ---------- API: File Uploads for CRF Attachments (Images, PDFs, Excel, etc.) ----------
+
+app.post('/api/upload', uploadDisk.array('files', 15), (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files provided' });
+    }
+    const attachments = req.files.map(f => {
+      let fileType = 'other';
+      const ext = path.extname(f.originalname).toLowerCase();
+      const mime = (f.mimetype || '').toLowerCase();
+      if (mime.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp'].includes(ext)) {
+        fileType = 'image';
+      } else if (mime === 'application/pdf' || ext === '.pdf') {
+        fileType = 'pdf';
+      } else if (mime.includes('spreadsheet') || mime.includes('excel') || mime.includes('csv') || ['.xlsx', '.xls', '.csv'].includes(ext)) {
+        fileType = 'excel';
+      } else if (mime.includes('word') || ['.doc', '.docx'].includes(ext)) {
+        fileType = 'word';
+      }
+      return {
+        id: uid(),
+        filename: f.filename,
+        originalName: f.originalname,
+        size: f.size,
+        type: fileType,
+        mimetype: f.mimetype,
+        url: '/uploads/' + f.filename,
+        uploadedAt: nowIso()
+      };
+    });
+    res.json({ ok: true, files: attachments });
+  } catch (e) {
+    console.error('File upload error:', e);
+    res.status(500).json({ error: 'Upload failed: ' + e.message });
+  }
+});
+
+app.delete('/api/upload/:filename', (req, res) => {
+  try {
+    const safeName = path.basename(req.params.filename);
+    const targetPath = path.join(UPLOADS_DIR, safeName);
+    if (fs.existsSync(targetPath)) {
+      fs.unlinkSync(targetPath);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.all('/api/download/:filename', (req, res) => {
+  try {
+    const safeName = path.basename(req.params.filename);
+    const targetPath = path.join(UPLOADS_DIR, safeName);
+    if (!fs.existsSync(targetPath)) {
+      return res.status(404).send('File not found');
+    }
+    const originalName = req.query.name ? path.basename(req.query.name) : safeName;
+    const stat = fs.statSync(targetPath);
+    const ext = path.extname(originalName).toLowerCase();
+
+    let mimeType = 'application/octet-stream';
+    if (ext === '.pdf') mimeType = 'application/pdf';
+    else if (ext === '.xlsx') mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    else if (ext === '.xls') mimeType = 'application/vnd.ms-excel';
+    else if (ext === '.csv') mimeType = 'text/csv';
+    else if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) mimeType = `image/${ext.replace('.', '') === 'jpg' ? 'jpeg' : ext.replace('.', '')}`;
+    else if (ext === '.doc') mimeType = 'application/msword';
+    else if (ext === '.docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(originalName)}"; filename*=UTF-8''${encodeURIComponent(originalName)}`);
+    res.setHeader('Content-Length', stat.size);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    if (req.method === 'HEAD' || req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+
+    const fileStream = fs.createReadStream(targetPath);
+    fileStream.pipe(res);
+  } catch (e) {
+    console.error('Download error:', e);
+    res.status(500).send('Error downloading file: ' + e.message);
+  }
+});
+
 // ---------- Word-compatible, colorful, branded export ----------
 
 function esc(s) { return (s == null ? '' : String(s)).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function fmtDate(d) { if (!d) return '—'; try { return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }); } catch (e) { return d; } }
 
 function wordDoc(title, bodyHtml) {
-  return `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-  <head><meta charset="utf-8"><title>${esc(title)}</title>
+  return `<html xmlns:v="urn:schemas-microsoft-com:vml"
+xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:w="urn:schemas-microsoft-com:office:word"
+xmlns:m="http://schemas.microsoft.com/office/2004/12/omml"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <title>${esc(title)}</title>
+  <!--[if gte mso 9]>
+  <xml>
+    <w:WordDocument>
+      <w:View>Print</w:View>
+      <w:Zoom>100</w:Zoom>
+      <w:DoNotOptimizeForBrowser/>
+      <w:AllowPNG/>
+    </w:WordDocument>
+  </xml>
+  <![endif]-->
   <style>
-    body{font-family:'Calibri',Arial,sans-serif;font-size:10.5pt;color:#000;line-height:1.25;}
-    h1{font-size:14pt;font-weight:bold;margin-bottom:2pt;text-align:center;}
-    .subtitle{color:#555;font-size:9pt;margin-bottom:10pt;text-align:center;}
-    h2{font-size:11pt;font-weight:bold;padding:2pt 0;margin-top:10pt;margin-bottom:3pt;border-bottom:1.5pt solid #000000;}
-    table{border-collapse:collapse;width:100%;margin-bottom:8pt;}
-    td,th{border:1px solid #000000;padding:4pt 6pt;vertical-align:top;font-size:9.5pt;}
-    th{background:#F2F2F2;text-align:left;font-weight:bold;}
-  </style></head><body>
-  ${LOGO_DATA_URI ? `<div style="text-align:center;margin-bottom:8pt;"><img src="${LOGO_DATA_URI}" height="38"></div>` : ''}
+    @page Section1 {
+      size: 8.5in 11.0in;
+      margin: 0.75in 0.75in 0.75in 0.75in;
+      mso-header-margin: 0.5in;
+      mso-footer-margin: 0.5in;
+      mso-paper-source: 0;
+    }
+    div.Section1 { page: Section1; }
+    body { font-family: 'Calibri', Arial, sans-serif; font-size: 10.5pt; color: #000000; line-height: 1.25; margin: 0; padding: 0; }
+    h1 { font-size: 14pt; font-weight: bold; margin-bottom: 2pt; text-align: center; }
+    .subtitle { color: #555555; font-size: 9pt; margin-bottom: 10pt; text-align: center; }
+    h2 { font-size: 11pt; font-weight: bold; padding: 2pt 0; margin-top: 10pt; margin-bottom: 3pt; border-bottom: 1.5pt solid #000000; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 8pt; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    td, th { border: 1px solid #000000; padding: 4pt 6pt; vertical-align: top; font-size: 9.5pt; }
+    th { background: #F2F2F2; text-align: left; font-weight: bold; }
+    p { margin: 0 0 4pt 0; }
+    .img-box-table { width: 100%; border: none !important; margin: 8pt 0 12pt 0; }
+    .img-box-table td { border: none !important; text-align: center; padding: 4pt 0; }
+  </style>
+</head>
+<body>
+<div class="Section1">
+  ${LOGO_DATA_URI ? `<table align="center" style="width:100%;border:none;margin-bottom:8pt;"><tr><td align="center" style="border:none;text-align:center;"><img src="${LOGO_DATA_URI}" height="38" style="height:38pt;border:none;"></td></tr></table>` : ''}
   ${bodyHtml}
-  </body></html>`;
+</div>
+</body>
+</html>`;
 }
 
 function renderPairedTable(leftKey, rightKey, tasks) {
@@ -1457,10 +1695,7 @@ function renderCRFCategoriesTable(tasks) {
   `;
 }
 
-app.get('/api/submissions/:id/export', (req, res) => {
-  const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).send('Not found');
-  const rec = fullRecord(row);
+function generateExportDocData(rec, req) {
   let bodyHtml, filename;
 
   if (rec.type === 'implementation') {
@@ -1609,19 +1844,175 @@ app.get('/api/submissions/:id/export', (req, res) => {
         ${action.processChange ? '☒' : '☐'} Process Change
       </div>
 
-      <h2>Describe Statement of Work</h2>
-      <div style="font-size:9.5pt;font-family:'Calibri';white-space:pre-wrap;margin-bottom:8pt;">${esc(sow.text)}</div>
-      
-      <h2>Insert Screenshots/Images here:</h2>
-      <div style="font-size:9.5pt;font-family:'Calibri';color:#666;font-style:italic;">${esc(sow.screenshotNote) || 'Please use this section for screenshots/images'}</div>
+      <h2>Insert Screenshots/Images &amp; Attachments here:</h2>
+      ${(() => {
+        let attHtml = '';
+        const attachments = Array.isArray(sow.attachments) ? sow.attachments : [];
+        const imageAtts = attachments.filter(a => a.type === 'image' || (a.mimetype && a.mimetype.startsWith('image/')) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(a.filename || a.originalName || ''));
+        const docAtts = attachments.filter(a => !imageAtts.includes(a));
+
+        if (imageAtts.length > 0) {
+          attHtml += '<div style="margin-top:6pt;margin-bottom:8pt;">';
+          imageAtts.forEach(img => {
+            let dataUri = '';
+            const filePath = img.filename ? path.join(UPLOADS_DIR, img.filename) : '';
+            if (filePath && fs.existsSync(filePath)) {
+              try {
+                const buf = fs.readFileSync(filePath);
+                const ext = (path.extname(filePath).toLowerCase().replace('.', '')) || 'png';
+                const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+                dataUri = `data:${mime};base64,` + buf.toString('base64');
+              } catch (e) { }
+            } else if (img.url && img.url.startsWith('data:image')) {
+              dataUri = img.url;
+            }
+            if (dataUri) {
+              const imgName = esc(img.originalName || img.filename || 'Screenshot');
+              attHtml += `
+                <table align="center" width="100%" class="img-box-table" style="width:100%;border:none;border-collapse:collapse;margin:8pt auto 10pt auto;">
+                  <tr>
+                    <td align="center" style="border:none;text-align:center;padding:4pt 0;">
+                      <p align="center" style="text-align:center;margin:0 0 3pt 0;">
+                        <img src="${dataUri}" width="520" style="width:520pt;max-width:100%;height:auto;border:1px solid #c0c0c0;" alt="${imgName}">
+                      </p>
+                      <div style="font-size:8.5pt;font-family:'Calibri',sans-serif;color:#555555;text-align:center;">
+                        <b>${imgName}</b> &middot; <a href="${dataUri}" download="${imgName}" style="color:#2563eb;text-decoration:none;font-weight:600;" target="_blank">&#10515; Download Image</a>
+                      </div>
+                    </td>
+                  </tr>
+                </table>`;
+            } else {
+              attHtml += `<div style="font-size:9.5pt;font-family:'Calibri';margin-bottom:4pt;">🖼️ <b>${esc(img.originalName || img.filename)}</b></div>`;
+            }
+          });
+          attHtml += '</div>';
+        }
+
+        if (docAtts.length > 0) {
+          attHtml += `<div style="margin-top:10pt;margin-bottom:10pt;">
+            <div style="font-size:9.5pt;font-weight:bold;font-family:'Calibri',Arial,sans-serif;margin-bottom:6pt;color:#111827;">Attached Files &amp; Documents:</div>
+            <div style="margin-top:4pt;">`;
+
+          docAtts.forEach(doc => {
+            const rawFilename = doc.filename || '';
+            const rawOriginalName = doc.originalName || rawFilename || 'Document';
+            const name = esc(rawOriginalName);
+            const sizeStr = doc.size ? ` (${Math.round(doc.size / 1024)} KB)` : '';
+
+            let downloadDataUri = '';
+            const filePath = rawFilename ? path.join(UPLOADS_DIR, rawFilename) : '';
+            if (filePath && fs.existsSync(filePath)) {
+              try {
+                const fileBuf = fs.readFileSync(filePath);
+                const ext = path.extname(rawOriginalName).toLowerCase();
+                let mimeType = 'application/octet-stream';
+                if (ext === '.pdf') mimeType = 'application/pdf';
+                else if (ext === '.xlsx') mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                else if (ext === '.xls') mimeType = 'application/vnd.ms-excel';
+                else if (ext === '.csv') mimeType = 'text/csv';
+                else if (ext === '.doc') mimeType = 'application/msword';
+                else if (ext === '.docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+                downloadDataUri = `data:${mimeType};base64,` + fileBuf.toString('base64');
+              } catch (e) { }
+            }
+            if (!downloadDataUri && doc.url && (doc.url.startsWith('data:') || doc.url.startsWith('http'))) {
+              downloadDataUri = doc.url;
+            }
+
+            attHtml += `
+              <table style="display:inline-table;width:auto;margin:3pt 6pt 6pt 0;border-collapse:collapse;border:none;">
+                <tr>
+                  <td style="border:1.2pt solid #a5b4fc;background:#ffffff;padding:5pt 12pt;border-radius:4px;vertical-align:middle;">
+                    <a href="${downloadDataUri || '#'}" download="${name}" target="_blank" style="color:#2563eb;text-decoration:none;font-family:'Calibri',Arial,sans-serif;font-size:10pt;font-weight:600;" title="Click to download ${name}">
+                      ${name}
+                    </a>
+                    <a href="${downloadDataUri || '#'}" download="${name}" target="_blank" style="color:#2563eb;text-decoration:none;font-size:11pt;margin-left:6pt;display:inline-block;vertical-align:middle;" title="Download ${name}">
+                      &#10515;
+                    </a>
+                    ${sizeStr ? `<span style="font-size:8pt;color:#6b7280;margin-left:4pt;font-family:'Calibri',sans-serif;">${sizeStr}</span>` : ''}
+                  </td>
+                </tr>
+              </table>`;
+          });
+          attHtml += `</div></div>`;
+        }
+
+        if (sow.screenshotNote) {
+          attHtml += `<div style="font-size:9.5pt;font-family:'Calibri';color:#444;margin-top:4pt;"><b>Reference / Link:</b> ${esc(sow.screenshotNote)}</div>`;
+        }
+
+        if (!attHtml) {
+          attHtml = `<div style="font-size:9.5pt;font-family:'Calibri';color:#666;font-style:italic;">Please use this section for screenshots/images</div>`;
+        }
+        return attHtml;
+      })()}
     `;
     filename = `${rec.client || 'Client'} CRF.doc`;
   }
 
+  return { bodyHtml, filename };
+}
+
+app.get('/api/submissions/:id/export', (req, res) => {
+  const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).send('Not found');
+  const rec = fullRecord(row);
+  const { bodyHtml, filename } = generateExportDocData(rec, req);
   const html = wordDoc(filename, bodyHtml);
   res.setHeader('Content-Type', 'application/msword');
   res.setHeader('Content-Disposition', `attachment; filename="${filename.replace(/"/g, '')}"`);
   res.send('\ufeff' + html);
+});
+
+app.get('/api/submissions/:id/export-zip', (req, res) => {
+  try {
+    const row = db.prepare('SELECT * FROM submissions WHERE id = ?').get(req.params.id);
+    if (!row) return res.status(404).send('Not found');
+    const rec = fullRecord(row);
+    const { bodyHtml, filename } = generateExportDocData(rec, req);
+    const html = wordDoc(filename, bodyHtml);
+
+    const zip = new AdmZip();
+    const clientName = (rec.client || 'Client').replace(/[/\\?%*:|"<>]/g, '_');
+
+    // 1. Add Word doc into ZIP
+    zip.addFile(`${filename.replace(/"/g, '')}`, Buffer.from('\ufeff' + html, 'utf8'));
+
+    // 2. Add all attachments into Attachments/ folder inside ZIP
+    const sow = rec.body && rec.body.sow ? rec.body.sow : {};
+    const attachments = Array.isArray(sow.attachments) ? sow.attachments : [];
+
+    attachments.forEach((att, idx) => {
+      const origName = att.originalName || att.filename || `attachment_${idx + 1}`;
+      const safeOrigName = origName.replace(/[/\\?%*:|"<>]/g, '_');
+      const filePath = att.filename ? path.join(UPLOADS_DIR, att.filename) : '';
+
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          const fileBuf = fs.readFileSync(filePath);
+          zip.addFile(`Attachments/${safeOrigName}`, fileBuf);
+        } catch (e) {
+          console.warn('Error adding file to zip:', e);
+        }
+      } else if (att.url && att.url.startsWith('data:')) {
+        try {
+          const base64Data = att.url.split(',')[1];
+          if (base64Data) {
+            zip.addFile(`Attachments/${safeOrigName}`, Buffer.from(base64Data, 'base64'));
+          }
+        } catch (e) { }
+      }
+    });
+
+    const zipBuffer = zip.toBuffer();
+    const zipName = `${clientName} CRF Package.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName.replace(/"/g, '')}"`);
+    res.send(zipBuffer);
+  } catch (e) {
+    console.error('ZIP export failed:', e);
+    res.status(500).send('Error generating ZIP: ' + e.message);
+  }
 });
 
 // ---------- Dashboard Excel export ----------
@@ -2053,11 +2444,11 @@ app.listen(PORT, () => {
   // Excel files will be regenerated on first data change.
   const isCloud = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.FLY_APP_NAME);
   if (!isCloud) {
-    // Defer local boot sync by 10s so server accepts requests first
     setTimeout(() => {
       updateTrackerExcel('crf');
       updateTrackerExcel('implementation');
       updateTrackerExcel('termination');
+      updateTrackerExcel('open_enrollment');
     }, 10000);
   }
 });
